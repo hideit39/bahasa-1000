@@ -73,9 +73,9 @@ h2{font-size:19px;margin:0 0 8px} .note{font-size:13px;line-height:1.7;color:var
 <section id="home" class="screen active">
   <div class="card hero">
     <h2>今日やること</h2>
-    <div class="note">新しい語彙を20個。期限が来た語彙は先に復習します。<br>目標は「見たら意味が分かる」ではなく、<b>日本語からインドネシア語が出る</b>ことです。</div>
+    <div class="note">新しい語彙を20個。期限が来た語彙は先に復習します。<br><b>インドネシア語を見て、日本語の意味を4択で選ぶ</b>だけです。間違えた語はその日の後半でもう一度出します。</div>
     <div style="height:14px"></div>
-    <button class="btn primary wide" onclick="startDaily()">今日の学習を始める</button>
+    <button class="btn primary wide" onclick="startDailyQuiz()">今日の4択学習を始める</button>
   </div>
   <div class="card">
     <div class="kpis">
@@ -144,10 +144,10 @@ h2{font-size:19px;margin:0 0 8px} .note{font-size:13px;line-height:1.7;color:var
 
 <section id="quiz" class="screen">
   <div class="card">
-    <div class="spread"><div><h2 style="margin:0">10問クイズ</h2><div class="small">学習済み語彙から出題</div></div><button class="btn" onclick="newQuiz()">↻</button></div>
+    <div class="spread"><div><h2 style="margin:0" id="quizTitle">4択クイズ</h2><div class="small" id="quizSub">インドネシア語 → 日本語</div></div><button class="btn" onclick="newQuiz()">↻</button></div>
     <div style="height:12px"></div>
     <div class="progress"><i id="quizProgress"></i></div>
-    <div class="label" style="margin-top:18px">日本語</div>
+    <div class="label" style="margin-top:18px">インドネシア語</div>
     <div class="prompt" id="quizPrompt"></div>
     <div id="quizOptions"></div>
     <div id="quizFeedback" class="note" style="margin-top:10px"></div>
@@ -165,8 +165,8 @@ h2{font-size:19px;margin:0 0 8px} .note{font-size:13px;line-height:1.7;color:var
 
 <div class="tabs">
   <button class="active" onclick="showScreen('home',this)">ホーム</button>
-  <button onclick="showScreen('learn',this)">学習</button>
-  <button onclick="showScreen('quiz',this)">クイズ</button>
+  <button onclick="showScreen('learn',this)">カード</button>
+  <button onclick="showScreen('quiz',this)">4択</button>
   <button onclick="showScreen('words',this)">1,000語</button>
 </div>
 </div>
@@ -181,7 +181,7 @@ state.lastStudy??=null;
 state.quizTotal??=0;
 state.quizCorrect??=0;
 state.savedAt??=null;
-let session=[],idx=0,direction='jp2id',filter='すべて',quiz=[],qidx=0,qlocked=false;
+let session=[],idx=0,direction='jp2id',filter='すべて',quiz=[],qidx=0,qlocked=false,quizMode='review',quizRepeat={};
 const LEARN_TEMPLATE=document.getElementById('learnCard').innerHTML;
 
 function todayNum(){return Math.floor(new Date().setHours(0,0,0,0)/86400000)}
@@ -286,31 +286,70 @@ function updateHome(){
   document.getElementById('pctText').textContent=pct+'%';
   document.getElementById('mainProgress').style.width=pct+'%';
 }
+function getDistractors(w){
+  const usedJp=new Set([w.jp]);
+  const same=DATA.filter(x=>x.rank!==w.rank&&x.cat===w.cat&&x.jp!==w.jp).sort(()=>Math.random()-.5);
+  const rest=DATA.filter(x=>x.rank!==w.rank&&x.cat!==w.cat&&x.jp!==w.jp).sort(()=>Math.random()-.5);
+  const out=[];
+  for(const x of [...same,...rest]){
+    if(!usedJp.has(x.jp)){out.push(x);usedJp.add(x.jp)}
+    if(out.length===3)break;
+  }
+  return out;
+}
+function startDailyQuiz(){
+  touchDay();
+  const due=dueWords().sort((a,b)=>ws(a.rank).score-ws(b.rank).score).slice(0,20);
+  const fresh=unseenWords(20);
+  const used=new Set(due.map(x=>x.rank));
+  quiz=[...due,...fresh.filter(x=>!used.has(x.rank))];
+  if(!quiz.length) quiz=DATA.filter(w=>ws(w.rank).score<5).slice(0,20);
+  quiz=quiz.sort(()=>Math.random()-.5);
+  quizMode='daily';quizRepeat={};qidx=0;qlocked=false;
+  save();
+  showScreen('quiz',document.querySelectorAll('.tabs button')[2]);
+  renderQuiz();
+}
 function newQuiz(){
   let pool=DATA.filter(w=>state.words[w.rank]&&state.words[w.rank].seen>0);
   if(pool.length<10)pool=DATA.slice(0,100);
-  quiz=[...pool].sort(()=>Math.random()-.5).slice(0,10);qidx=0;renderQuiz();
+  quiz=[...pool].sort(()=>Math.random()-.5).slice(0,10);
+  quizMode='review';quizRepeat={};qidx=0;qlocked=false;renderQuiz();
 }
 function renderQuiz(){
+  const title=document.getElementById('quizTitle'),sub=document.getElementById('quizSub');
+  if(title) title.textContent=quizMode==='daily'?'今日の4択学習':'10問復習クイズ';
+  if(sub) sub.textContent='インドネシア語 → 日本語';
   if(qidx>=quiz.length){
-    document.getElementById('quizPrompt').textContent='10問完了';
-    document.getElementById('quizOptions').innerHTML='<button class="btn primary wide" onclick="newQuiz()">もう10問</button>';
+    document.getElementById('quizPrompt').textContent=quizMode==='daily'?'今日の学習完了':'10問完了';
+    document.getElementById('quizOptions').innerHTML=quizMode==='daily'
+      ?'<button class="btn primary wide" onclick="startDailyQuiz()">もう一度やる</button>'
+      :'<button class="btn primary wide" onclick="newQuiz()">もう10問</button>';
     document.getElementById('quizFeedback').textContent='';
     document.getElementById('quizProgress').style.width='100%';return;
   }
   qlocked=false;const w=quiz[qidx];
   document.getElementById('quizProgress').style.width=(qidx/quiz.length*100)+'%';
-  document.getElementById('quizPrompt').textContent=w.jp;
+  document.getElementById('quizPrompt').textContent=w.word;
   document.getElementById('quizFeedback').textContent='';
-  const other=DATA.filter(x=>x.rank!==w.rank).sort(()=>Math.random()-.5).slice(0,3);
-  const opts=[w,...other].sort(()=>Math.random()-.5);
-  document.getElementById('quizOptions').innerHTML=opts.map(o=>`<button class="btn quizopt" data-rank="${o.rank}" onclick="answerQuiz(${o.rank},this)">${o.word}</button>`).join('');
+  const opts=[w,...getDistractors(w)].sort(()=>Math.random()-.5);
+  document.getElementById('quizOptions').innerHTML=opts.map(o=>`<button class="btn quizopt" data-rank="${o.rank}" onclick="answerQuiz(${o.rank},this)">${o.jp}</button>`).join('');
 }
 function answerQuiz(r,el){
-  if(qlocked)return;qlocked=true;const w=quiz[qidx];state.quizTotal++;
-  if(r===w.rank){state.quizCorrect++;el.classList.add('correct');document.getElementById('quizFeedback').textContent='正解';}
-  else{el.classList.add('wrong');const c=[...document.querySelectorAll('.quizopt')].find(b=>Number(b.dataset.rank)===w.rank);if(c)c.classList.add('correct');document.getElementById('quizFeedback').textContent='正解：'+w.word;}
-  save();setTimeout(()=>{qidx++;renderQuiz()},850);
+  if(qlocked)return;qlocked=true;const w=quiz[qidx],s=ws(w.rank),t=todayNum();
+  state.quizTotal++;s.seen=Math.max(1,s.seen);s.last=Date.now();
+  if(r===w.rank){
+    state.quizCorrect++;el.classList.add('correct');
+    s.score=Math.min(5,s.score+1);const iv=[1,1,3,7,14,30][s.score];s.due=t+iv;
+    document.getElementById('quizFeedback').textContent='正解：'+w.jp;
+  }else{
+    el.classList.add('wrong');
+    const c=[...document.querySelectorAll('.quizopt')].find(b=>Number(b.dataset.rank)===w.rank);if(c)c.classList.add('correct');
+    s.score=Math.max(0,s.score-1);s.due=t;
+    document.getElementById('quizFeedback').textContent='正解：'+w.jp;
+    if(quizMode==='daily' && (quizRepeat[w.rank]||0)<1){quiz.push(w);quizRepeat[w.rank]=(quizRepeat[w.rank]||0)+1;}
+  }
+  touchDay();save();setTimeout(()=>{qidx++;renderQuiz()},950);
 }
 function renderChips(){
   document.getElementById('chips').innerHTML=CATS.map(c=>`<button class="chip ${c===filter?'active':''}" onclick="setFilter('${c}')">${c}</button>`).join('');
